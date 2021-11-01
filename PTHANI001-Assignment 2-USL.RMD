@@ -1,0 +1,1274 @@
+---
+title: "Unsupervised Learning - Assignment 2"
+author: "Anil Kumar Pathipati - PTHANI001"
+date: '`r format(Sys.Date(), "%d-%B-%Y")`'
+output:
+ bookdown::pdf_book:
+    toc: true
+    fig_caption: yes
+    latex_engine: xelatex
+   
+
+---
+
+\newpage  
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE,fig.align="center",fig.height=10,fig.width = 18,tidy.opts=list(width.cutoff=60),tidy=TRUE)
+rm(list=ls())
+```
+
+**Introduction**:
+---------------
+
+We are given 2 data sets MNIST and WDBC in a csv files.These 2 data sets has dependent variables which are labels. 
+
+The first dataset named min_mnist.csv is a sample of 10000 examples made up of 5000 each of handwritten digits 5 and 8. In the min_mnist,csv file every row consists of a grey scale image of digit 5 or 8 represented by a one dimension vector of size 785 columns. The first number of each row is the label of the image. The following 784 numbers are the pixels of the 28 x 28 image whose values range from 0 to 255.
+
+
+The second dataset named WDBC.csv is the Wisconsin Diagnostic Breast Cancer dataset (source:  UCI Machine Learning) consists of 569 data points classified as either malignant or benign. Data was computed from a digitized image of a fine needle aspirate (FNA) of a breast mass.Each instance contains 30 features describing different characteristics of the cell nuclei present in the image.
+
+Our task is to apply different dimensional reduction methods to the data sets in order to determine which methods and parameters work best on different types of data. To evaluate the performance of the reduction method, we will classify the data using the KNN algorithm. The algorithm will be applied first, when the data is in the original dimension and second, when data is in the reduced dimension. The difference in the results will be used to evaluate the impact of reducing the dimensions on accuracy. The dimensionality reduction methods to be tested are: PCA, AUTOENCODER, and IsoMAP.
+
+So lets go ahead and load the required libraries to perform this task.
+
+Import required libraries to perform this task. I will be using tidyverse for basic data manipulations, caret for test and train data split RDR Toolbox for ISOMAP and Keras for Autoencoders.
+
+```{r}
+library(tidyverse)
+library(caret)
+library(gridExtra)
+library(factoextra)
+library(class)
+library(dimRed)
+library(RDRToolbox)
+library(DataExplorer)
+library(tfruns)
+library(reshape2)
+
+```
+
+Now that we have our libraries defined and  installed,Lets go ahead and load the given data sets. Now, that we have our data sets loaded, lets go ahead and find the nuances of the given data sets by exploratory data analysis. For this task, I will first work on the MNIST data set and later on the cancer diagnostics data set.
+```{r}
+##loading min_mnist data set
+df1<-read.csv("D://Masters//Unsupervised Learning//Assignment 2//min_mnist.csv", skip = 1, header = F)
+##converting the loaded data to data frame
+df1<-as.data.frame(df1)
+##renaming the column names to pixel followed by the number
+d<-as.data.frame(rep("Pixel",785))
+##making sure its in a data frame format
+d1<-as.data.frame(1:785)
+##column binding the features and the labels
+d2<-as.data.frame(cbind(d,d1))
+##assigning the generated labels above to the data frame
+d2$x<-paste(d2$`rep("Pixel", 785)`,d2$`1:785`)
+d3<-t(d2[,3])
+colnames(df1)<-c(d3)
+##loading WDBC data set
+df2<-read.csv2("D://Masters//Unsupervised Learning//Assignment 2//WDBC.csv",header = TRUE)
+##converting the loaded data to a data frame
+df2<-as.data.frame(df2)
+```
+
+**Exploratory Data Analysis on MNIST data set**
+--------------------------
+As stated above, lets check the nuances of the given data set.
+
+**Summary of the given data set**
+
+Lets try to understand the given data set.
+
+From below we see that, there are total 1000 observations and 785 features. Out of which 0 are discrete in nature which means our class labels is also considered as numeric in nature which should be converted to discrete. Rest of the features are continuous in nature and We do not have any missing values in our data set. Now that we know our data set in general. Lets try to explore the class label which is important in our case as we will be doing classification using KNN.
+```{r}
+##summary of the data set 
+knitr::kable(t(introduce(df1)), row.names = TRUE,caption = "Summary of the given Cancer Diagnosis data set'", 
+             col.names = "", format.args = list(big.mark = ",")) %>% 
+ kableExtra::kable_styling(bootstrap_options = "striped", latex_options = "HOLD_position")
+```
+
+Before proceeding further, lets try to convert some of the features into their original forms as below.
+
+**Min_Mist data set**
+
+1. Converted the dependent variable i.,e labels to factor labels as it was numeric in nature.
+2. Checked for NA in the data set and found that there are no NA's
+3. Though there are many columns with the 0 values, we cannot remove them as it represents a grey scale image and if we remove the features with 0's then we dont get the same image. So, for now lets leave the 0 columns in the data set.
+```{r}
+##checking for NA's in the data set
+q1<-sum(is.na(df1))
+##renaming the column class labels 
+names(df1)[1]<-"labels"
+#df1$labels<-as.factor(df1$labels)
+```
+
+**Understanding Class Distribution**
+
+First lets convert the class label to discrete and check the distribution on it. We see that we have equal class distribution in the original data set which is ideal for any kind of ML technique. 
+
+```{r}
+jo<-df1
+jo$labels<-as.factor(jo$labels)
+names(jo)[1]<-"labels"
+##plotting class labels in the data set
+ggplot(data=jo,aes(x=labels)) + geom_bar() + geom_text(stat='Count',aes(label=..count..),vjust=-1)+theme_classic()+labs(title="Class label distribution in the data set")
+```
+
+**Stratified sampling**
+
+As the data set is huge in size and this was a problem while working with ISOMAP as it require a lot of memory, To avoid this I am taking only 2000 samples from the MNIST data set for the next steps. Now, the challenge is how do i select these 2000 samples? We should select samples in such a way that the selected sample should represent the population. For this purpose, I will be using stratified sampling where I will select the samples in such a way that the selected sample is class balanced and is not biased to a particular class.This will also eliminate the bias of our model by balancing the selected sample with both the classes equally
+
+For this purpose as stated above, I will be using stratification for sample selection. Lets go ahead and select our sample and see the class proportions in the selected sample. Below is the proportion of classes in the selected sample.
+
+```{r}
+##taking only 2000 stratified samples
+set.seed(123)
+##selecting 2000 samples from the whole data set
+data1<-sample_n(df1, 2000)
+##converting the label class to factors.
+data1$labels<-as.factor(data1$labels)
+##checking the proportion of the classes
+##tabulating the results 
+pro<-prop.table(table(data1$labels)) * 100
+knitr::kable(round(pro,0), row.names = TRUE,caption = "Proportion of classes in MNIST selected sample'", 
+             format.args = list(big.mark = ","),col.names = c('Class labels', '% of samples selected'),align = "c") %>% 
+ kableExtra::kable_styling(bootstrap_options = "striped", latex_options = "HOLD_position",font_size = 14)
+```
+From above, we see that the selected samples are almost in a same proportion. So, this is a good sample and it represents most of the population i.,e size of the whole data set. Now, that we have our data set with reduced number of observations, lets go ahead and use this for further steps.
+
+I am not performing much of EDA here as its a grey scale image data and we are doing dimension reduction and performing KNN where required information about the data is already known from above.
+
+
+**KNN on the original data set MNIST - 2000 sampled data set**
+------------------------
+
+**K-Nearest Neighbor**
+
+KNN stands for K Nearest Neighbor is a Supervised Machine Learning algorithm that classifies a new data point into the target class, depending on how similar they are to their neighboring data points.
+
+**KNN Algorithm**
+The KNN algorithm has the following features:
+
+1. KNN is a Supervised Learning algorithm that uses labeled train input data set to predict the output of the test data points.
+2. It is mainly based on feature similarity. KNN checks how similar a data point is to its neighbor and classifies the data point into the class it is most similar to.
+3. Unlike most algorithms, KNN is a non-parametric model which means that it does not make any assumptions about the data set.This makes the algorithm more effective since it can handle realistic data.
+4. KNN can be used for solving both classification and regression problems.
+
+So, now that we know how KNN works, lets go ahead and use this algorithm for classification on the original data set with 2000 samples.
+
+**Test and train split**
+
+To implement KNN we first need to split our data set to test and train data sets. we will train the model with the train data set and test the model performance using test data set. I will split the data set in such a way that 80% of it is used to train the data set and another 20% of it to test the model performance. We will check the model accuracy in classification to judge the model performance.
+
+Lets split the given data set into test and train data sets using caret package. 
+```{r}
+##setting seed for re producability
+set.seed(300)
+#Splitting data as training and test set. Using createDataPartition() function from caret
+indxTrain <- createDataPartition(y = data1$labels,p = 0.8,list = FALSE)
+##for train data set split
+train1 <- data1[indxTrain,]
+##for test data set split
+test1 <- data1[-indxTrain,]
+##removing the class label from the data set
+train <- train1[,-1]
+##train labels 
+train_labels<- train1[,1]
+##removing labels from test data set
+test <- test1[,-1]
+##test labels
+test_labels <-test1[,1]
+##final selected train and test data sets for further steps.
+```
+
+**Normalizing the data set**
+
+As we are asked to perform the KNN clustering, we want the given data set to be normalized so that distances between variables with larger ranges will not be over-emphasized in model building. As we have MNIST hand written image data and the data has pixel information of the image, we cannot normalize it using a regular approach. To normalize this data set, we have to divide each feature with the total pixel value range. as we know that each number represents a color code in the data set and the pixel values range from 0 to 256, apart from 0 the range is 255. So dividing all the values by 255 will convert it to range from 0 to 1. So to achieve this, we will be dividing the selected sample data set with 255 to normalize it.
+
+```{r}
+##normalizing the data set by dividing with 255 range
+train_final<-train/255
+test_final<-test/255
+```
+
+Now that we have our data normalized, lets go ahead and fit these data sets to the model.
+
+**Fitting the Model**
+
+Before, that we should first specify the k value to the model. In order to pick the best K value, lets train the model with the train data set on different K values and pick the best K value based on the model performance. We will pick the best K value based on the accuracy output on the train and test data set. We will then use the same K value for our next steps.
+
+In this step, I will check the model accuracy for k values between 2 and 10.
+```{r}
+##setting seed for re producability
+set.seed(123)
+i=1
+# declaration to initiate for loop
+k.optm=1     
+# declaration to initiate for loop
+for (i in 2:10){ 
+  knn.mod <-  knn(train=train_final, test=test_final, cl=train_labels, k=i,prob = TRUE)
+  ##fitting the model with knn function and train data set
+  k.optm[i] <- 100 * sum(test_labels == knn.mod)/NROW(test_labels)
+  ##deriving the accuracy
+  k=i  
+  #cat(k,'=',k.optm[i],'\n')
+  # to print % accuracy 
+}
+y<-as.data.frame(k.optm)
+##converting the output to the data frame
+x<-as.data.frame(c(1:10))
+xy<-as.data.frame(cbind.data.frame(x,y))
+names(xy)[1]<-"K"
+names(xy)[2]<-"Model Accuracy"
+xy<-xy[-1,]
+knitr::kable(round(xy,2), row.names = TRUE,caption = "Checking for best K value", 
+            format.args = list(big.mark = ","),align = "c") %>% 
+ kableExtra::kable_styling(bootstrap_options = "striped", latex_options = "HOLD_position",font_size = 14)
+
+```
+
+Now that we have fit the model, from above, we see that the best K value is `r which.max(k.optm)` with the highest accuracy. Lets plot the same for better visualization. From below we see that the best K value obtained is `r which.max(k.optm)`
+
+```{r}
+##plotting to know the best value of K
+plot(xy, type="b", xlab="K- Value",ylab="Accuracy level",main="Plotting K values to find best K")
+```
+
+```{r}
+#setting seed for re producability
+set.seed(1)
+##applying KNN model on test and train with best K value 
+knn.optimal <- knn(train=train_final, test=test_final, cl=train_labels, k=which.max(k.optm),prob = TRUE)
+##calculating classification accuracy
+k.optm <- 100 * sum(test_labels == knn.optimal)/NROW(test_labels)
+##creating a confusion matrix
+actual_pca<-confusionMatrix(knn.optimal ,test_labels)
+```
+Now using the best K value from above, lets find the model performance by checking the classification accuracy which is `r round(actual_pca$overall["Accuracy"],2)`
+
+Now lets go ahead and dp dimension reduction using PCA and assess the model classification accuracy from KNN.
+
+**Principle component analysis on MNIST sampled data set**
+-----------------
+
+Principal Component Analysis is a dimensionality reduction technique that is used to reduce the dimensionality of large data sets, by transforming a large set of variables into a smaller one that still contains most of the information in the large set.
+
+Below are the high level summary of PCA Algorithm.
+
+1. Standardize the data (x)
+2. Calculate covariance of the data (X*X(transpose))
+3. Calculate Eigen values and Eigen vectors (Eigen decomposition)
+4. Sort the Eigen Vectors
+5. Calculate the new features(x_new=x*sorted Eigen vectors)
+6. Drop unimportant features from data set.
+
+**Fitting PCA on MNIST and KNN**
+
+Lets go ahead and implement the same on our data set. For this, I will be considering the 2000 sampled data set, then split the data into train and test data sets and then apply PCA on train data set and use the same embedding for my test data set. Once I get my both train and test data sets, then I will apply KNN on the train and test reduced dimensions on it and calculate test classification accuracy for different reduced dimensions as explained below.
+
+To apply PCA, we need to normalize the data set. We will normalize the MNIST data set by dividing the pixel information with 255 as explained above.
+
+We will then consider only 2,3,4,5,6 Principle components and apply KNN to check classification accuracy. I will use the same K value as tested above on the full data set to check the model accuracy because, we are checking the model performance on the reduced data set which makes more sense to take same K value which has yielded best results on original data set as it will be easy to compare different models.
+
+```{r}
+##setting seed for reproducability
+set.seed(123)
+##scaling the sampled data set
+scale_mnist<-data1[,-1]/255
+##column binding the labels to the scaled data set
+scale_mnist_1<-cbind.data.frame(data1$labels,scale_mnist)
+##renaming the column headers
+names(scale_mnist_1)[1]<-"labels"
+
+##split to train and test
+##setting seed for reproducability
+set.seed(300)
+##using caret to split the data 
+indxTrain <- createDataPartition(y = scale_mnist_1$labels,p = 0.8,list = FALSE)
+##train data set
+train1 <- scale_mnist_1[indxTrain,]
+##test data set
+test1 <- scale_mnist_1[-indxTrain,]
+
+##applying PCA
+##setting seed for reproducability
+set.seed(1)
+##applying PCA on the train data set
+pca <- princomp(train1[,-1],scores = TRUE)
+##plotting the pc's to check variance explained by components
+fviz_eig(pca,addlabels=TRUE,geom = "line",ggtheme = theme_minimal(base_size = 20))
+##saving the pc's from train data set to a data frame
+train_pc=as.data.frame(pca$scores)
+
+
+##fitting PCA Embedding on test data sets
+##predicting the pc's on the test data set using same train embedding
+pred <- predict(pca, newdata=test1[,-1])
+##saving the pc's from test data set to a data frame
+test_pc=as.data.frame(pred)
+
+
+##applying KNN on train pc's
+##setting seed for reproducability
+set.seed(123)
+# declaration to initiate for loop
+j=2
+# declaration to initiate for loop
+k.optm_case1=0
+# declaration to initiate for loop
+for (j in 2:6){ 
+  set.seed(123)
+  ##standardizing the first 2 pc  
+  pc_train_features<-scale(as.data.frame(train_pc[,(1:j)]))
+  ##adding labels back to the pC's
+  pc_test_features<-scale(as.data.frame(test_pc[,(1:j)]))
+  ##train data set labels
+  train_case1_labels<-train1[,1]
+  ##test data set labels
+  test_case1_labels<-test1[,1]
+  ##for reproducability
+  set.seed(1)
+  ##fitting KNN on the train and test data set
+  knn_case1<- knn(train=pc_train_features, test=pc_test_features, cl=train_case1_labels, k=which.max(k.optm),prob = TRUE)
+  ##calculating the accuracy of the model
+  k.optm_case1[j] <- 100 * sum(test_case1_labels == knn_case1)/NROW(test_case1_labels)
+}
+
+##saving output to a data frame
+k.optm_case2<-as.data.frame(k.optm_case1)
+##creating row labels for number of PCS
+k.optm_case3<-as.data.frame(c(1:6))
+##cbinding both the data frame
+k.optm_case4<-as.data.frame(cbind.data.frame(k.optm_case3,k.optm_case2))
+##removing unwated rows
+k.optm_case5<-k.optm_case4[-1,]
+##renaming the columns of the final data frame
+names(k.optm_case5)[1]<-"# of PC's"
+names(k.optm_case5)[2]<-"KNN Model Accuracy"
+##tabulating the results
+knitr::kable(round(k.optm_case5,2), row.names = TRUE,caption = "KNN Model performance on PCA reduced dimensions", 
+             format.args = list(big.mark = ","),align = "c") %>% 
+  kableExtra::kable_styling(bootstrap_options = "striped", latex_options = "HOLD_position",font_size = 14)
+
+
+```
+
+Above plot explains the percentage of variance on Y axis and Number of dimensions on X axis. It shows that the amount of variance explained by each principle component on different dimensions. If we observe the first Pc explains approx 12% variance followed by others.In our case, as explained above, we have tested for 2,3,4,5 and 6 pc's on KNN and found the classification accuracy as shown in the table above.The classification accuracy improved as the number of PC's increased. 6 pc's give almost very close classification accuracy as we got for the original data set. from above, we see that the accuracy slightly dipped from 4 pc's to 5pc's. This is due to the fact that the data set is huge and the number of features are very high in number. I suspect its due to large number of features. Lets go ahead and compare the model accuracies with the original data set accuracy We will compare accuracies from all the models at the end.
+
+Now that we have seen and proved how different Principle components explain the variance in the larger data sets with minimum number of features and achieved almost same result with reduced feature sets, lets go ahead and see if the same holds true with other data reduction techniques.
+
+Lets now, try with ISOMAP assuming our data is non linear in nature.
+
+**ISOMAP on MNIST sampled data set**
+------------------
+
+We have applied PCA above with an assumption that the MNIST data set is linear in nature. But we really dont know if the given data set is linear or not. I could have checked using some scatter plots on the feature space. But due to the fact that we have many features, its almost not possible to plot them and check for linearity. 
+
+To address this, now we will assume that our data set is non linear and lets try to adopt a new data reduction technique called ISOMAP which mainly works with an assumption that the given data set is non linear in nature.
+
+**ISOMAP Algorithm**
+
+1. use KNN (using Euclidean distance)to form a neighborhood graph.
+2. Calculate geodesic distance
+3. Form a dissimilarity matrix using geodesic distances between the points
+4. Square the dissimilarity matrix & double center it
+5. Then do Eigen decomposition & choose ‘k’ Eigen vectors.
+
+Now lets go ahead and implement the same on our data sets. For this I will be using a library called dimRed which is primarily designed for dimension reductions, we will first reduce our data set to maximum of 6 dimensions and then fit our KNN model and check the model accuracy for 2,3,4,5 and 6 dimensions and then compare the KNN accuracy for all the model.
+
+**Hyper Parameter - Grid search**
+
+Before going ahead as explained in the algorithm above, we have a hyper parameter K which we need to find for our data set.The Isomap algorithm approximates a manifold using geodesic distances on a k nearest neighbor graph.
+
+The connectivity of each data point in the neighborhood graph is defined as its nearest k Euclidean neighbors in the high-dimensional space. Finding k is very important to avoid any short-circuit errors if k is too large then the manifold structure moves the points slightly off the manifold. Even a single short-circuit error can alter many entries in the geodesic distance matrix, which in turn can lead to a drastically different low-dimensional embedding.if k is too small, the neighborhood graph may become too sparse to approximate geodesic paths accurately and may contain holes. 
+
+So, in order to tackle this situation, we should find the best K value which we will do it by using dimRed library.For this, we will convert our data set to dimred data frame format and then we will check for best K value by embedding the manifold.In this process, the function automatically embeds ISOMAP by calculating geodesic distances and then find the best K value by using Qlocal criterion. more about this is explained in the attached reference journal link.
+
+ 
+Reference for above inferences : [Journal Reference](https://journal.r-project.org/archive/2018/RJ-2018-039/RJ-2018-039.pdf)
+
+```{r message=FALSE,warning=FALSE}
+##finding optimal parameters in this case K nearest neighbours
+##converting the data frame to dimReddata frame
+check1<-as.dimRedData(labels~.,data1)
+##defining the parameter space to check for best K  
+kk<-floor(seq(5,100,length.out=40))
+##Embedding over parameter space
+emb<-lapply(kk,function(x) embed(check1,"Isomap",knn=x))
+##Quality over embeddings
+qual<-sapply(emb,function(x) quality(x,"Q_local"))
+## Find best value for K
+ind_max<-which.max(qual)
+k_max<-kk[ind_max]
+```
+By using above method, the best K value for Isomap is `r k_max`. Lets go ahead and use this to simulate ISOMAP on our data set. The approach is similar, we will use the train and test generated above and convert them to a dimReddata format and then apply ISOMAP on train and test data sets. Then use the 6 reduced dimensions from train and test to calculate classification accuracy using KNN
+
+```{r message=FALSE,warning=FALSE}
+##applying ISOMAP
+##train and test split in dimRed data fromat
+train_iso<- as.dimRedData(labels~.,train1)
+test_iso<- as.dimRedData(labels~.,test1)
+
+##applying ISO on train data set
+##embedding the manifold for 6 dimensions
+emb2 <- embed(train_iso, "Isomap", knn = k_max,ndim = 6)
+##saving the dimensions to a data frame
+iso_train_dims<-as.data.frame(emb2@data@data)
+
+##fitting ISO Embedding on test data sets
+emb3 <- emb2@apply(test_iso)
+##saving the dimensions from test data set to a data frame
+iso_test_dims<-as.data.frame(emb3@data)
+
+
+##applying KNN 
+# declaration to initiate for loop
+set.seed(123)
+k=2
+k.optm_case1_iso=0
+# declaration to initiate for loop
+for (k in 2:6){ 
+  set.seed(123)
+  ##standardizing the first 2 pc  
+  iso_train_features<-scale(as.data.frame(iso_train_dims[,(1:k)]))
+  ##adding labels back to the pC's
+  iso_test_features<-scale(as.data.frame(iso_test_dims[,(1:k)]))
+  ##train data set labels
+  train_case1_labels<-train1[,1]
+  ##test data set labels
+  test_case1_labels<-test1[,1]
+  ##for reproducability
+  set.seed(1)
+  ##fitting KNN on the train and test data set
+  knn_case1_iso<- knn(train=iso_train_features, test=iso_test_features, cl=train_case1_labels, k=which.max(k.optm),prob = TRUE)
+  ##calculating the accuracy of the model
+  k.optm_case1_iso[k] <- 100 * sum(test_case1_labels == knn_case1_iso)/NROW(test_case1_labels)
+}
+
+##saving output to a data frame
+k.optm_case2_iso<-as.data.frame(k.optm_case1_iso)
+##creating row labels for number of PCS
+k.optm_case3_iso<-as.data.frame(c(1:6))
+##cbinding both the data frame
+k.optm_case4_iso<-as.data.frame(cbind.data.frame(k.optm_case3_iso,k.optm_case2_iso))
+##removing unwated rows
+k.optm_case5_iso<-k.optm_case4_iso[-1,]
+##renaming the columns of the final data frame
+names(k.optm_case5_iso)[1]<-"# of PC's"
+names(k.optm_case5_iso)[2]<-"KNN Model Accuracy"
+##tabulating the results
+knitr::kable(round(k.optm_case5_iso,2), row.names = TRUE,caption = "KNN Model performance on ISOMAP reduced dimensions", 
+             format.args = list(big.mark = ","),align = "c") %>% 
+  kableExtra::kable_styling(bootstrap_options = "striped", latex_options = "HOLD_position",font_size = 14)
+```
+The above table represent the classification accuracy of the KNN on the reduced dimensions of data set obtained from ISOMAP on MNIST data set. The classification accuracy on 6 dimensions is very close to that of the accuracy from the original data set and it is better than classical PCA. The same will be shown from the below graph where this will be compared with the original data set KNN accuracy value.
+
+Now that we have seen the performance of ISOMAP. lets go ahead and explore Auto Encoders
+
+**Auto Encoders on MNIST data set**
+------------------------------------
+
+**Auto Econders**
+
+Autoencoders are an unsupervised learning technique which uses neural networks for dimension reduction. Specifically, we'll design a neural network such that we impose a bottleneck in the network which forces a compressed feature representation of the original input features. If the input features were each independent of one another, this compression and reconstruction would be a very difficult task. However, if some sort of correlations between input features exists in the data, this structure can be learned and consequently used when moving the input through the network's bottleneck.
+
+**AutoEncoders Algorithm**
+
+1. Build a neural network with many dense layers where the first dense layer should have same units as input features
+2. The first dense layer should have number of columns defined
+3. The subsequent layers will decrease to the desired reduced feature space in our case its 6(bottleneck layer) which form an Encoder
+4. From bottle neck layer, we will again try to reconstruct the original feature space which is termed as Decoder
+5. In decoder we will build the last dense layer which will have same input features
+6. Then we will calculate reconstruction loss to assess the model performance
+7. Reconstruction loss should be as minimal as possible which indicates the quality of our AutoEncoder.
+
+**grid search for Hyper Parameters**
+
+**Note**
+
+There are many hyper parameters in auto encoders like the number of units, activation function,epochs, batch size,different optimizers, learning rate etc...We should ideally find the best hyper parameters based on the grid search to find the optimal values of these. Due to the complexity involved in searching for a lot of hyper parameters using grid search, I am limiting my grid search only for few hyper parameters and picking other hyper parameters randomly keeping memory and time in mind.
+
+Few of the hyper parameters taken randomly in my case are activation function, number of units in dense layers and the optimizer. The autoencoder trains the weights to minimize some cost function. This cost function should minimize the distance between input and output values. The choice of activation functions is based on the specific task, normally we will use Relu. In my case I will use Leaky Relu. As leaky relu is more balanced and therefore learn faster and also Leaky ReLU has a small slope for negative values, instead of zero.
+
+Lets go ahead and implement the same using Keras. In this we will define sequential layers which form both encoder and decoder and also we will define the optimizer which we want to use. In my case, i will be using adam optimizer. My input layer has 785 features and then it is reduced to 6 feature space and reconstructed back and the reconstruction loss will be assessed.
+
+I will be using grid search to find the best epochs and the batch size for the autoencoders. I have created a gridsearch.R names R file in my current working directory with the keras code below. I will run it by defining the parameters as explained in the grid search and find the best parameters and then use the same for fitting my actual model and then take the reduced feature space and use them for KNN. I will define flags in the R file where I will specify the range I want to perform grid search on.
+
+
+```{r message=FALSE,warning=FALSE,echo=FALSE}
+##grid search with batch size and epochs
+source("gridsearch.R")
+set.seed(123)
+runs<-tuning_run("gridsearch.R",
+                 flags = list(batch_size=c(50,100,150),epochs=c(30,40,50)))
+```
+
+
+```{r}
+##tabulating the results
+runs1<-as.data.frame(runs)
+knitr::kable((runs1[,c(3,4,5,6)]), row.names = TRUE,caption = "Grid Search results showing train and validation reconstruction loss", 
+             format.args = list(big.mark = ","),align = "c") %>% 
+  kableExtra::kable_styling(bootstrap_options = "striped", latex_options = "HOLD_position",font_size = 14)
+
+```
+
+```{r eval=FALSE,echo=FALSE}
+##Experiment.R used for grid search
+
+##FLAGS
+FLAGS<-flags(flag_integer('batch_size',30),
+             flag_integer('epochs',120))
+
+##Model
+##define sequential layers for autoencoders
+model <- keras_model_sequential()
+model %>%
+  ##input layer with 785 features 
+  layer_dense(units = 785, activation = "LeakyReLU", input_shape = ncol(x_train)) %>%
+  ##subsequent layer reduced to 500 features
+  layer_dense(units = 500, activation = "LeakyReLU") %>%
+  ##subsequent layer reduced to 300 features
+  layer_dense(units = 300, activation = "LeakyReLU") %>%
+  ##subsequent layer reduced to 200 features
+  layer_dense(units = 200, activation = "LeakyReLU") %>%
+  ##subsequent layer reduced to 100 features
+  layer_dense(units = 100, activation = "LeakyReLU") %>%
+  ##bottle neck layer reduced to 6 features
+  layer_dense(units = 6, activation = "LeakyReLU", name = "bottleneck") %>%
+  ##subsequent reconstruction layer increased to 100 features
+  layer_dense(units = 100, activation = "LeakyReLU") %>%
+  ##subsequent reconstruction layer increased to 200 features
+  layer_dense(units = 200, activation = "LeakyReLU") %>%
+  ##subsequent reconstruction layer increased to 300 features
+  layer_dense(units = 300, activation = "LeakyReLU") %>%
+  ##subsequent reconstruction layer increased to 500 features
+  layer_dense(units = 500, activation = "LeakyReLU") %>%
+  ##subsequent reconstruction layer increased to original feature space
+  layer_dense(units = 785, activation = "LeakyReLU") 
+
+
+##model compiler
+model %>% compile(
+  ##loss function
+  loss = "mse", 
+  ##compiler type
+  optimizer = "adam"
+)
+
+
+##fitting the data to model
+model %>% fit(
+  x = x_train, 
+  y = x_train, 
+  ##number of epochs
+  epochs = FLAGS$epochs,
+  ##batch size for each run
+  batch_size=FLAGS$batch_size,
+  ##validation split
+  validation_split=.2,
+  verbose = 0
+)
+
+```
+From above we see select the hyper parameters for which the train and validation loss is very minimal and both are very close to each other which indicates that there is no overfitting issues with a batch size. Lets use these best parameters to fit our model and then consider the reduced feature space and perform KNN 
+
+```{r message=FALSE,warning=FALSE}
+##calling keras library
+suppressPackageStartupMessages(library(keras))
+##verifying conda config to make sure keras/tensorflow are present
+system("conda config --set ssl_verify false")
+##making sure all the features are numeric in nature
+data3<-sapply(train1[,-1],as.numeric)
+##converting the train and test data sets to a matrix format
+x_train <- as.matrix(data3)
+x_test<-as.matrix(test1[,-1])
+
+##Model
+##define sequential layers for autoencoders
+model <- keras_model_sequential()
+model %>%
+  ##input layer with 785 features 
+  layer_dense(units = 785, activation = "LeakyReLU", input_shape = ncol(x_train)) %>%
+  ##subsequent layer reduced to 500 features
+  layer_dense(units = 500, activation = "LeakyReLU") %>%
+   ##subsequent layer reduced to 300 features
+  layer_dense(units = 300, activation = "LeakyReLU") %>%
+   ##subsequent layer reduced to 200 features
+  layer_dense(units = 200, activation = "LeakyReLU") %>%
+   ##subsequent layer reduced to 100 features
+  layer_dense(units = 100, activation = "LeakyReLU") %>%
+   ##bottle neck layer reduced to 6 features
+  layer_dense(units = 6, activation = "LeakyReLU", name = "bottleneck") %>%
+   ##subsequent reconstruction layer increased to 100 features
+  layer_dense(units = 100, activation = "LeakyReLU") %>%
+  ##subsequent reconstruction layer increased to 200 features
+  layer_dense(units = 200, activation = "LeakyReLU") %>%
+  ##subsequent reconstruction layer increased to 300 features
+  layer_dense(units = 300, activation = "LeakyReLU") %>%
+  ##subsequent reconstruction layer increased to 500 features
+  layer_dense(units = 500, activation = "LeakyReLU") %>%
+  ##subsequent reconstruction layer increased to original feature space
+  layer_dense(units = 785, activation = "LeakyReLU") %>%
+  layer_dense(units=ncol(x_train))
+
+
+##model compiler
+model %>% compile(
+  ##loss function
+  loss = "mse", 
+  ##compiler type
+  optimizer = "adam"
+)
+
+
+##fitting the data to model
+model %>% fit(
+  x = x_train, 
+  y = x_train, 
+  ##number of epochs
+  epochs = 40,
+  ##batch size for each run
+  batch_size=100,
+  ##validation split
+  validation_split=.2,
+  verbose = 0
+)
+##evaluating the model performance
+mse.ae2 <- evaluate(model, x_train, x_train)
+
+##extracting the reduced data set
+intermediate_layer_model <- keras_model(inputs = model$input, outputs = get_layer(model, "bottleneck")$output)
+intermediate_output_train <- predict(intermediate_layer_model, x_train)
+intermediate_output_test <- predict(intermediate_layer_model, x_test)
+```
+The reconstruction loss with the best parameters is `r round(mse.ae2,2)` Now that we have obtained our reduced features, lets go ahead and perform KNN to access the classification accuracy.
+
+**fitting KNN on the reduced dimensions**
+
+```{r}
+##setting seed for reproducability
+set.seed(123)
+##initating for loop
+l=2
+##declaration for loop
+k.optm_case1_ae=0
+##saving all the intermediate outputs for train in a data frame
+aedf_train <- data.frame(node1 = intermediate_output_train[,1], 
+                    node2 = intermediate_output_train[,2],
+                    node3 = intermediate_output_train[,3],
+                    node4 = intermediate_output_train[,4],
+                    node5=intermediate_output_train[,5],
+                    node6=intermediate_output_train[,6],
+                    labels=train1$labels)
+##saving all the intermediate outputs for test data set in a data frame
+aedf_test <- data.frame(node1 = intermediate_output_test[,1], 
+                         node2 = intermediate_output_test[,2],
+                         node3 = intermediate_output_test[,3],
+                         node4 = intermediate_output_test[,4],
+                         node5=intermediate_output_test[,5],
+                         node6=intermediate_output_test[,6],
+                         labels=test1$labels)
+
+# declaration to initiate for loop
+for (l in 2:6){ 
+  set.seed(123)
+  ##standardizing the first 2 pc  
+  ae_train_features<-scale(as.data.frame(aedf_train[,(1:l)]))
+  ##adding labels back to the pC's
+  ae_test_features<-scale(as.data.frame(aedf_test[,(1:l)]))
+  ##train data set labels
+  train_case1_labels<-train1[,1]
+  ##test data set labels
+  test_case1_labels<-test1[,1]
+  ##for reproducability
+  set.seed(1)
+  ##fitting KNN on the train and test data set
+  knn_case1_ae<- knn(train=ae_train_features, test=ae_test_features, cl=train_case1_labels, k=which.max(k.optm),prob = TRUE)
+  ##calculating the accuracy of the model
+  k.optm_case1_ae[l] <- 100 * sum(test_case1_labels == knn_case1_ae)/NROW(test_case1_labels)
+}
+##saving output to a data frame
+k.optm_case2_ae<-as.data.frame(k.optm_case1_ae)
+##creating row labels for number of PCS
+k.optm_case3_ae<-as.data.frame(c(1:6))
+##cbinding both the data frame
+k.optm_case4_ae<-as.data.frame(cbind.data.frame(k.optm_case3_ae,k.optm_case2_ae))
+##removing unwated rows
+k.optm_case5_ae<-k.optm_case4_ae[-1,]
+##renaming the columns of the final data frame
+names(k.optm_case5_ae)[1]<-"# of Dimension's"
+names(k.optm_case5_ae)[2]<-"KNN Model Accuracy"
+##tabulating the results
+knitr::kable(round(k.optm_case5_ae,2), row.names = TRUE,caption = "KNN Model performance on AutoEncoders reduced dimensions", 
+             format.args = list(big.mark = ","),align = "c") %>% 
+  kableExtra::kable_styling(bootstrap_options = "striped", latex_options = "HOLD_position",font_size = 14)
+
+```
+
+**Conclusion for MNIST data set**
+-----------------------
+```{r}
+##creating a data frame with original accuracy
+j1<-round(actual_pca$overall["Accuracy"],2)*100
+dk1 <- data.frame(KNN_accuracy_original_data = c(j1, j1, j1, j1, j1))
+##combining accuracies from all the models
+u2<-cbind.data.frame(k.optm_case5,dk1,k.optm_case5_iso[,2],k.optm_case5_ae[,2])
+##renaming the headers
+names(u2)[2]<-"KNN Accuracy using PCA"
+names(u2)[4]<-"KNN Accuracy using ISOMAP"
+names(u2)[5]<-"KNN Accuracy using AutoEncoders"
+
+##reshaping the produced data frame for easy visualization
+dd1 = melt(u2, id=c("# of PC's"))
+##plotting the results.
+ggplot(dd1) + geom_line(aes(x=`# of PC's`, y=value, colour=variable)) +scale_colour_manual(values=c("black","red","blue","orange"))+theme_classic(base_size=14)+labs(title = "Comparsion of different Model accuracy with original data",
+         x = "# of reduced features",
+         y = "KNN Classification Accuracy",color = "Legend")+geom_point(aes(x=`# of PC's`, y=value, colour=variable))
+
+```
+
+
+
+From above, our best KNN accuracy very close to our original data set with the reduced dimensional features is achieved via ISOMAP with accuracy of 0.96 with 6 dimensions where as the original KNN classification accuracy was 0.98. Auto encoders would have given better accuracy compared to ISOMAP if we have tuned our model for all the hyper parameters. Due to the computational complexity, we could not tune much, but still auto encoders above performs best with a reconstruction loss of just `r round(mse.ae2,2)`. From this we conclude that when a large feature space is reduced, it has  a little chance to over perform than the model derived on the original data set. But again, We may find a better answer when we can tune our Auto encoders in a more sophisticated way. 
+
+3. For classifying digits, the best model from above simulation, I would suggest ISOMAP. As stated above, Auto Encoders also can be used with best Hyper parameter selection if it can be computed.
+
+Now that we have understood the impact of dimensional reduction on MNIST data set. Lets try and implement the same with other data set in our case its Breast cancer diagnosis data set.
+
+\newpage
+
+
+**Second data set - Cancer Diagnostics data**
+---------------------
+
+**Note** Please note that the algorithms are same that we gonna see, for detailed understanding of the algorithm, please refer to the introduction given to MNIST data set above where we explained in a detailed way. I am not repeating the concepts here as they are already done for one data set.
+
+**Exploratory Data analysis on Cancer Diagnostics data**
+------------------------------
+
+**Load the data set**
+
+We have already loaded this data set at the start. Now,lets call the data frame to which it has been loaded earlier and use this for our next steps.
+```{r}
+##loading WDBC data set
+df2<-read.csv("D://Masters//Unsupervised Learning//Assignment 2//WDBC.csv",header = TRUE)
+##saving into a data frame
+df2.1<-as.data.frame(df2)
+df2<-df2.1[,-1]
+```
+
+**Summary of the given data set**
+
+Lets try to understand the given data set.
+
+From below we see that, there are total 569 observations and 31 features. Out of which 1 is discrete in nature which is our class label. Rest of the features are continuous in nature and We do not have any missing values in our data set. Now that we know our data set in general. Lets try to explore the class label which is important in our case as we will be doing classification using KNN.
+```{r}
+##summary of the data set 
+knitr::kable(t(introduce(df2)), row.names = TRUE,caption = "Summary of the given Cancer Diagnosis data set'", 
+             col.names = "", format.args = list(big.mark = ",")) %>% 
+ kableExtra::kable_styling(bootstrap_options = "striped", latex_options = "HOLD_position")
+```
+**Class Label and feature Distribution in the given data set**
+
+From below graph we see that there are total 569 class labels out of which 357 which is approximately 63% belong to class B and 212(37%) belong to class M. The class distribution is not balanced in this case, there are more observations in one class and less in the other class. But this should not be a problem in our case, as we are performing dimension reduction and not selecting samples as we did in MNIST data set.
+
+```{r}
+##plotting class labels in the data set
+ggplot(data=df2.1,aes(x=diagnosis)) + geom_bar() + geom_text(stat='Count',aes(label=..count..),vjust=-1)+theme_classic()+labs(title="Class label distribution in the data set")
+```
+
+Now, lets try to understand the distribution of features
+```{r}
+##boxplot the features
+tmp<-boxplot(df2[,-1],xaxt = "n", main="Distribution of features")
+##labels rotation
+tick <- seq_along(tmp$names)
+axis(1, at = tick, labels = F)
+text(tick, par("usr")[3] -0.1, tmp$names, srt = 12, xpd = T)
+
+```
+
+From above box plot which represent the distribution of the features, we see that the features need to be normalized which will be done in the next steps. 
+
+Now, that our data set is ready and we know some insights about the given data set, lets go ahead and implement the KNN clustering on the original data set.
+
+**KNN on the original cancer diagnostics data**
+------------------
+
+Lets split the given data set into test and train data sets using caret package. I am splitting 80% of the data into train and 20% to test data set which will be used for all the models 
+```{r}
+set.seed(300)
+#Spliting data as training and test set. Using createDataPartition() function from caret
+indxTrain_split <- createDataPartition(y = df2$diagnosis,p = 0.8,list = FALSE)
+##train data set
+train_d2 <- df2[indxTrain_split,]
+##test data set
+test_d2 <- df2[-indxTrain_split,]
+##train labels
+train_d3 <- train_d2[,-1]
+train_d3_labels<- train_d2[,1]
+##test labels
+test_d3 <- test_d2[,-1]
+test_d3_labels <-test_d2[,1]
+##plotting the test and train distribution
+a1<-ggplot(data=train_d2,aes(x=diagnosis)) + geom_bar() + geom_text(stat='Count',aes(label=..count..),vjust=-1)+labs(title="Train data set class distribution")+theme_classic()
+a2<-ggplot(data=test_d2,aes(x=diagnosis)) + geom_bar() + geom_text(stat='Count',aes(label=..count..),vjust=-1)+labs(title="Test data set class distribution")+theme_classic()
+grid.arrange(a1, a2, nrow=1)
+```
+
+
+**Normalize the cancer diagnosis data set**
+
+As we have observed above, the data set need normalization as its in a different scale. lets normalize the data set so that all the numbers in the data set are centered around 0. We will do the same with caret package with preprocess function.
+
+```{r}
+##using caret for normalization
+library(caret)
+##centering and scaling train data set
+preproc1 <- preProcess(train_d3, method=c("center", "scale"))
+train_d4 <- predict(preproc1, train_d3)
+##centering and scaling test data set
+preproc2 <- preProcess(test_d3, method=c("center", "scale"))
+test_d4 <- predict(preproc2, test_d3)
+```
+
+Now that we have Normalized our data set, lets go ahead and fit KNN on the data set on train and test and check the classification accuracy. I have explianed in detail about the KNN in the MNIST data set above.
+
+**KNN model on original cancer diagnosis data set**
+
+We will be checking for best K value in a range of 1 and 10 and use the best where the classification accuracy is high
+```{r}
+##setting seed for reproducability
+set.seed(123)
+i=1                          # declaration to initiate for loop
+k.optm1=1                     # declaration to initiate for loop
+for (i in 1:10){ 
+  knn.mod1 <-  knn(train=train_d4, test=test_d4, cl=train_d3_labels, k=i)
+  k.optm1[i] <- 100 * sum(test_d3_labels == knn.mod1)/NROW(test_d3_labels)
+  k=i  
+  #cat(k,'=',k.optm1[i],'\n')       # to print % accuracy 
+}
+y1<-as.data.frame(k.optm1)
+##converting the output to the data frame
+x1<-as.data.frame(c(1:10))
+##saving the output in a data frame
+xy1<-as.data.frame(cbind.data.frame(x1,y1))
+##renaming the columns
+names(xy1)[1]<-"K"
+names(xy1)[2]<-"Model Accuracy"
+xy1<-xy1[-1,]
+##tabulating the results
+knitr::kable(round(xy1,2), row.names = TRUE,caption = "Checking for best K value on Cancer Diagnosis data set", 
+            format.args = list(big.mark = ","),align = "c") %>% 
+ kableExtra::kable_styling(bootstrap_options = "striped", latex_options = "HOLD_position",font_size = 14)
+```
+Above table represent the best K values and their accuracy. we will choose the one with the highest accuracy for our next steps. In this case our best K value is `r which.max(k.optm1)` which has an accuracy value of `r max(k.optm1)`
+
+Lets plot the above results for better visualization
+```{r}
+##plotting to know the best value of K
+plot(k.optm1, type="b", xlab="K- Value",ylab="Accuracy level",main="K-values v/s classification accuracy")
+```
+Using the same K value to fit our data and for the next steps where we will use this value for our test data set and obtain the accuracy. 
+
+
+
+```{r}
+#setting seed for reproducability
+set.seed(1)
+##applying KNN model on test and train with best K value 
+knn.optimal1 <- knn(train=train_d4, test=test_d4, cl=train_d3_labels, k=which.max(k.optm1))
+##calculating classification accuracy
+test_d3_labels<-as.factor(test_d3_labels)
+##classification accuracy
+k.optm1 <- 100 * sum(test_d3_labels == knn.optimal1)/NROW(test_d3_labels)
+actual_pca1<-confusionMatrix(knn.optimal1 ,test_d3_labels)
+
+```
+
+The classification accuracy on the with the best K value is `r round(actual_pca1$overall["Accuracy"],2)`
+
+Now, lets go ahead and try different dimension reduction techniques and see which model performs better on this data set with the reduced feature space.
+
+
+**Applying PCA on the Cancer diagnosis data set**
+---------------------
+
+As explained before we will be applying Principle component analysis and we will extract only 6 reduced dimensions and then perform KNN clustering in increasing order of the 6 reduced features. After doing that below are the results.
+```{r}
+##setting seed for reproducability
+set.seed(123)
+##scaling the sampled data set
+
+##normalizing the data set
+std<- preProcess(df2[,-1], method=c("center", "scale"))
+std1 <- predict(std, df2[,-1])
+std2<-as.data.frame(cbind.data.frame(df2$diagnosis,std1))
+names(std2)[1]<-"labels"
+
+##split to train and test
+##setting seed for reproducability
+set.seed(300)
+##using caret to split the data 
+indxTrain_d2 <- createDataPartition(y = std2$labels,p = 0.8,list = FALSE)
+##train data set
+train1_d2 <- std2[indxTrain_d2,]
+##test data set
+test1_d2 <- std2[-indxTrain_d2,]
+
+##applying PCA
+##setting seed for reproducability
+set.seed(1)
+##applying PCA on the train data set
+pca_d2 <- princomp(train1_d2[,-1],scores = TRUE)
+##plotting the pc's to check variance explained by components
+fviz_eig(pca_d2,addlabels=TRUE,geom = "line",ggtheme = theme_minimal(base_size = 20))
+##saving the pc's from train data set to a data frame
+train_pc_d2=as.data.frame(pca_d2$scores)
+
+
+##fitting PCA Embedding on test data sets
+##predicting the pc's on the test data set using same train embedding
+pred_d2 <- predict(pca_d2, newdata=test1_d2[,-1])
+##saving the pc's from test data set to a data frame
+test_pc_d2=as.data.frame(pred_d2)
+
+
+##applying KNN on train pc's
+##setting seed for reproducability
+set.seed(123)
+# declaration to initiate for loop
+s=2
+# declaration to initiate for loop
+k.optm_case1_d2=0
+# declaration to initiate for loop
+for (s in 2:6){ 
+  set.seed(123)
+  ##standardizing the first 2 pc  
+  pc_train_features_d2<-scale(as.data.frame(train_pc_d2[,(1:s)]))
+  ##adding labels back to the pC's
+  pc_test_features_d2<-scale(as.data.frame(test_pc_d2[,(1:s)]))
+  ##train data set labels
+  train_case1_labels_d2<-train1_d2[,1]
+  ##test data set labels
+  test_case1_labels_d2<-test1_d2[,1]
+  ##for reproducability
+  set.seed(1)
+  ##fitting KNN on the train and test data set
+  knn_case1_d2<- knn(train=pc_train_features_d2, test=pc_test_features_d2, cl=train_case1_labels_d2, k=which.max(k.optm1),prob = TRUE)
+  ##calculating the accuracy of the model
+  k.optm_case1_d2[s] <- 100 * sum(test_case1_labels_d2 == knn_case1_d2)/NROW(test_case1_labels_d2)
+}
+
+##saving output to a data frame
+k.optm_case2_d2<-as.data.frame(k.optm_case1_d2)
+##creating row labels for number of PCS
+k.optm_case3_d2<-as.data.frame(c(1:6))
+##cbinding both the data frame
+k.optm_case4_d2<-as.data.frame(cbind.data.frame(k.optm_case3_d2,k.optm_case2_d2))
+##removing unwated rows
+k.optm_case5_d2<-k.optm_case4_d2[-1,]
+##renaming the columns of the final data frame
+names(k.optm_case5_d2)[1]<-"# of PC's"
+names(k.optm_case5_d2)[2]<-"KNN Model Accuracy using PCA"
+##tabulating the results
+knitr::kable(round(k.optm_case5_d2,2), row.names = TRUE,caption = "KNN Model performance on PCA reduced dimensions", 
+             format.args = list(big.mark = ","),align = "c") %>% 
+  kableExtra::kable_styling(bootstrap_options = "striped", latex_options = "HOLD_position",font_size = 14)
+
+```
+
+From above graph where X axis represent the number of principle components and Y axis represent the variance explained by each of the component.We will be taking 6 components which will account to  88% of the variation in the original data set.
+
+From the table We see that that the 6 reduced dimension give almost same classification accuracy as the original data set. Though we see a slight dip in the classification accuracy from 2 to 3 dimension, this may be due to the noise in the 3rd component and it started picking up and went very close to the accuracy values from original data set after that. This shows how reduced dimensions explain most of the large feature space with the reduced feature space and the same results can be achieved with that. We will compare the classification accuracies at the end.
+
+Now, that we have assumed our feature space to be linearity, lets now assume that we have non linear features in the data set and use ISOMAP to reduce the feature space and lets fit KNN on it and see how it works.
+
+**ISOMAP on Cancer diagnosis data set**
+----------------------
+
+As explained earlier for MNIST data, here our first task to do in ISOMAP is to estimate the hyper parameter K. For which we will be using dimRed library and find the best K value. We will be choosing best K value through a grid search from dimRed
+
+```{r message=FALSE,warning=FALSE}
+##finding optimal parameters in this case K nearest neighbours
+##converting the data frame to dimReddata frame
+check1_d2<-as.dimRedData(diagnosis~.,df2)
+##defining the parameter space to check for best K  
+kk_d2<-floor(seq(5,100,length.out=40))
+##Embedding over parameter space
+emb_d2<-lapply(kk_d2,function(x) embed(check1_d2,"Isomap",knn=x))
+##Quality over embeddings
+qual_d2<-sapply(emb_d2,function(x) quality(x,"Q_local"))
+## Find best value for K
+ind_max_d2<-which.max(qual_d2)
+k_max_d2<-kk_d2[ind_max_d2]
+```
+By using above method, the best K value for Isomap is `r k_max`. Lets go ahead and use this to simulate ISOMAP on our data set. The approach is similar, we will take the train and test and convert to a dimReddata format and then apply ISOMAP on train and test data sets. Then use the reduced dimensions from train and test to calculate classification accuracy using KNN. Below are the results after performing this task.
+
+```{r message=FALSE,warning=FALSE}
+##applying ISOMAP
+##train and test split in dimRed data format
+train_iso_d2<- as.dimRedData(labels~.,train1_d2)
+test_iso_d2<- as.dimRedData(labels~.,test1_d2)
+
+##applying ISO on train data set
+##embedding the manifold for 6 dimensions
+emb2_d2 <- embed(train_iso_d2, "Isomap", .mute = c("message", "output"), knn = k_max_d2,ndim = 6)
+##saving the dimensions to a data frame
+iso_train_dims_d2<-as.data.frame(emb2_d2@data@data)
+
+##fitting ISO Embedding on test data sets
+emb3_d2 <- emb2_d2@apply(test_iso_d2)
+##saving the dimensions from test data set to a data frame
+iso_test_dims_d2<-as.data.frame(emb3_d2@data)
+
+
+##applying KNN 
+# declaration to initiate for loop
+set.seed(123)
+r=2
+k.optm_case1_iso_d2=0
+# declaration to initiate for loop
+for (r in 2:6){ 
+  set.seed(123)
+  ##standardizing the first 2 pc  
+  iso_train_features_d2<-scale(as.data.frame(iso_train_dims_d2[,(1:r)]))
+  ##adding labels back to the pC's
+  iso_test_features_d2<-scale(as.data.frame(iso_test_dims_d2[,(1:r)]))
+  ##train data set labels
+  train_case1_labels_d2<-train1_d2[,1]
+  ##test data set labels
+  test_case1_labels_d2<-test1_d2[,1]
+  ##for reproducability
+  set.seed(1)
+  ##fitting KNN on the train and test data set
+  knn_case1_iso_d2<- knn(train=iso_train_features_d2, test=iso_test_features_d2, cl=train_case1_labels_d2, k=which.max(k.optm1),prob = TRUE)
+  ##calculating the accuracy of the model
+  k.optm_case1_iso_d2[r] <- 100 * sum(test_case1_labels_d2 == knn_case1_iso_d2)/NROW(test_case1_labels_d2)
+}
+
+##saving output to a data frame
+k.optm_case2_iso_d2<-as.data.frame(k.optm_case1_iso_d2)
+##creating row labels for number of PCS
+k.optm_case3_iso_d2<-as.data.frame(c(1:6))
+##cbinding both the data frame
+k.optm_case4_iso_d2<-as.data.frame(cbind.data.frame(k.optm_case3_iso_d2,k.optm_case2_iso_d2))
+##removing unwated rows
+k.optm_case5_iso_d2<-k.optm_case4_iso_d2[-1,]
+##renaming the columns of the final data frame
+names(k.optm_case5_iso_d2)[1]<-"# of PC's"
+names(k.optm_case5_iso_d2)[2]<-"KNN Model Accuracy using ISOMAP"
+##tabulating the results
+knitr::kable(round(k.optm_case5_iso_d2,2), row.names = TRUE,caption = "KNN Model performance on ISOMAP reduced dimensions", 
+             format.args = list(big.mark = ","),align = "c") %>% 
+  kableExtra::kable_styling(bootstrap_options = "striped", latex_options = "HOLD_position",font_size = 14)
+```
+The above table represent the classification accuracy of the KNN on the reduced data set obtained from ISOMAP on cancer diagnosis data set. The classification accuracy on 5 dimensions is same to that of the accuracy from the original data set and it is better than classical PCA. The same will be compared at the bottom.
+
+Now that we have seen the ISOMAP performance, lets go ahead and use Auto Encoders and see the model performance
+
+**Applying Auto Encoders on Cancer diagnostics data set**
+------------------------------------
+
+**Grid Search for hyper parameters**
+
+As explained previously, we have many hyper parameters to correctly choose. In this case, its computationally complex to choose all of them. So, In this case I will follow the same approach as I took for the previous data set. I will use some randomly choose hyper parameters and some from the grid search. I will choose the number of units in the dense layers randomly. I will choose Leaky Layer as its more robust and balanced as explained previously. I will also use adam optimizer for this task. I will pick the number of epochs and batch size based on the grid search. I will do grid search by defining flags for different hyper parameters.
+
+Lets go ahead and do the grid search. I have also given the code which I used for the grid search
+
+```{r message=FALSE,warning=FALSE,echo=FALSE}
+source("gridsearch1.R")
+set.seed(123)
+##grid search for hyper parameters
+runs5<-tuning_run("gridsearch1.R",
+                 flags = list(batch_size=c(10,20,30,40,50),
+                              epochs=c(100,250,300,400,500)))
+```
+
+```{r}
+##tabulating the results
+runs6<-as.data.frame(runs5)
+knitr::kable((runs6[,c(3,4,5,6)]), row.names = TRUE,caption = "Grid Search results showing train and validation reconstruction loss", 
+             format.args = list(big.mark = ","),align = "c") %>% kableExtra::kable_styling(bootstrap_options = "striped", latex_options = "HOLD_position",font_size = 14)
+
+```
+
+
+```{r eval=FALSE,echo=FALSE}
+##grid search code ##gridsearch1
+
+suppressPackageStartupMessages(library(keras))
+##making sure all the features are numeric in nature
+data3_d2<-sapply(train1_d2[,-1],as.numeric)
+##converting the train and test data sets to a matrix format
+x_train_d2 <- as.matrix(data3_d2)
+x_test_d2<-as.matrix(test1_d2[,-1])
+
+##FLAGS
+
+FLAGS<-flags(flag_integer('batch_size',30),
+             flag_integer('epochs',120))
+
+##Model
+##define sequential layers for autoencoders
+model1 <- keras_model_sequential()
+model1 %>%
+  layer_dense(units = 30, activation = "LeakyReLU", input_shape = ncol(x_train_d2),use_bias = TRUE) %>%
+  layer_dense(units = 6, activation = "LeakyReLU", name = "bottleneck",use_bias = TRUE) %>%
+  layer_dense(units = 30, activation = "LeakyReLU",use_bias = TRUE) %>%
+  layer_dense(units = ncol(x_train_d2))
+
+model1 %>% compile(
+  loss = "mse", 
+  optimizer = "adam"
+)
+
+##fitting the data to model
+
+model1 %>% fit(
+  x = x_train_d2, 
+  y = x_train_d2, 
+  epochs = FLAGS$epochs,
+  batch_size=FLAGS$batch_size,
+  validation_split=.2,
+  verbose = 0
+)
+
+##evaluating the model performance
+
+mse.ae3 <- evaluate(model1, x_train_d2, x_train_d2)
+```
+From above, the best hyper parameters are the one's which has minimum loss for both train and validation. Lets pick the lowest values from the above table and consider those hyper parameters which are 400 epochs and 20 batch size for our model and use them for further steps. I choose them because they have the lowest loss and also close to each other which indicates that there is no over fitting scenario.
+
+```{r}
+suppressPackageStartupMessages(library(keras))
+system("conda config --set ssl_verify false")
+x_train_d2 <- as.matrix(train1_d2[,-1])
+x_test_d2<-as.matrix(test1_d2[,-1])
+
+##Model
+
+model1 <- keras_model_sequential()
+model1 %>%
+  layer_dense(units = 30, activation = "LeakyReLU", input_shape = ncol(x_train_d2),use_bias = TRUE) %>%
+  layer_dense(units = 6, activation = "LeakyReLU", name = "bottleneck",use_bias = TRUE) %>%
+  layer_dense(units = 30, activation = "LeakyReLU",use_bias = TRUE) %>%
+  layer_dense(units = ncol(x_train_d2))
+
+model1 %>% compile(
+  loss = "mse", 
+  optimizer = "adam"
+)
+
+##fitting the data to model
+
+model1 %>% fit(
+  x = x_train_d2, 
+  y = x_train_d2, 
+  epochs = 400,
+  batch_size=20,
+  validation_split=.2,
+  verbose = 0
+)
+
+mse.ae3 <- evaluate(model1, x_train_d2, x_train_d2)
+
+##extracting the reduced data set
+
+intermediate_layer_model3 <- keras_model(inputs = model1$input, outputs = get_layer(model1, "bottleneck")$output)
+intermediate_output3_train_d2 <- predict(intermediate_layer_model3, x_train_d2)
+intermediate_output3_test_d2 <- predict(intermediate_layer_model3, x_test_d2)
+```
+
+Now that we have our model with the best parameters i.,e for batch size and epochs and have fitted the model for both train and test data set with the reconstruction loss of `r round(mse.ae3,2)` we will use this reduced feature space with 6 dimensions and perform KNN clustering and check the classification accuracy in the next steps.
+
+**fitting KNN on the reduced dimensions**
+
+```{r}
+##setting seed for reproducability
+set.seed(123)
+##initating for loop
+t=2
+##declaration for loop
+k.optm_case1_ae_d2=0
+##saving all the intermediate outputs for train in a data frame
+aedf_train_d2 <- data.frame(node1 = intermediate_output3_train_d2[,1], 
+                    node2 = intermediate_output3_train_d2[,2],
+                    node3 = intermediate_output3_train_d2[,3],
+                    node4 = intermediate_output3_train_d2[,4],
+                    node5=intermediate_output3_train_d2[,5],
+                    node6=intermediate_output3_train_d2[,6])
+
+##saving all the intermediate outputs for test data set in a data frame
+aedf_test_d2 <- data.frame(node1 = intermediate_output3_test_d2[,1], 
+                         node2 = intermediate_output3_test_d2[,2],
+                         node3 = intermediate_output3_test_d2[,3],
+                         node4 = intermediate_output3_test_d2[,4],
+                         node5=intermediate_output3_test_d2[,5],
+                         node6=intermediate_output3_test_d2[,6])
+
+# declaration to initiate for loop
+for (t in 2:6){ 
+  set.seed(123)
+  ##standardizing the first 2 pc  
+  ae_train_features_d2<-scale(as.data.frame(aedf_train_d2[,(1:t)]))
+  ##adding labels back to the pC's
+  ae_test_features_d2<-scale(as.data.frame(aedf_test_d2[,(1:t)]))
+  ##train data set labels
+  train_case1_labels_d2<-train1_d2[,1]
+  ##test data set labels
+  test_case1_labels_d2<-test1_d2[,1]
+  ##for reproducability
+  set.seed(1)
+  ##fitting KNN on the train and test data set
+  knn_case1_ae_d2<- knn(train=ae_train_features_d2, test=ae_test_features_d2, cl=train_case1_labels_d2, k=which.max(k.optm1),prob = TRUE)
+  ##calculating the accuracy of the model
+  k.optm_case1_ae_d2[t] <- 100 * sum(test_case1_labels_d2 == knn_case1_ae_d2)/NROW(test_case1_labels_d2)
+}
+##saving output to a data frame
+k.optm_case2_ae_d2<-as.data.frame(k.optm_case1_ae_d2)
+##creating row labels for number of PCS
+k.optm_case3_ae_d2<-as.data.frame(c(1:6))
+##cbinding both the data frame
+k.optm_case4_ae_d2<-as.data.frame(cbind.data.frame(k.optm_case3_ae_d2,k.optm_case2_ae_d2))
+##removing unwated rows
+k.optm_case5_ae_d2<-k.optm_case4_ae_d2[-1,]
+##renaming the columns of the final data frame
+names(k.optm_case5_ae_d2)[1]<-"# of Dimension's"
+names(k.optm_case5_ae_d2)[2]<-"KNN Model Accuracy using Auto Encoders"
+##tabulating the results
+knitr::kable(round(k.optm_case5_ae_d2,2), row.names = TRUE,caption = "KNN Model performance on AutoEncoders reduced dimensions", 
+             format.args = list(big.mark = ","),align = "c") %>% 
+  kableExtra::kable_styling(bootstrap_options = "striped", latex_options = "HOLD_position",font_size = 14)
+
+```
+
+
+
+**Conclusion for Cancer Diagnosis data set**
+--------------------
+
+The below graph represent KNN classification accuracy from various models on cancer diagnosis data set where X axis represent number of reduced dimensions and Y axis represent the KNN accuracy. We have compared it with the accuracy from the original data set. We see that the accuracy from all the models for their reduced 5th and 6th dimension outperforms the original KNN accuracy. This signifies that there is a lot of noise and unwanted features in the original data set which does not really help in classifying the labels. When we reduce those features to a different dimensions then we see a better accuracy. This conclude that our reduced feature space explains large feature data sets in a efficient way. In this case ISOMAP out performs on all the models with the consistent accuracy from 2nd dimension on wards. May be Auto Encoders also would have done a better job if we had selected all the hyper parameters from a grid search which is computationally complex.
+
+```{r}
+##creating a data frame with original accuracy
+j<-round(actual_pca1$overall["Accuracy"],2)*100
+dk <- data.frame(KNN_accuracy_original_data = c(j, j, j, j, j))
+##combining accuracies from all the models
+u1<-cbind.data.frame(k.optm_case5_d2,dk,k.optm_case5_iso_d2[,2],k.optm_case5_ae_d2[,2])
+##renaming the headers
+names(u1)[4]<-"KNN Accuracy using ISOMAP"
+names(u1)[5]<-"KNN Accuracy using AutoEncoders"
+
+##reshaping the produced data frame for easy visualization
+dd = melt(u1, id=c("# of PC's"))
+##plotting the results.
+ggplot(dd) + geom_line(aes(x=`# of PC's`, y=value, colour=variable)) +scale_colour_manual(values=c("black","red","blue","orange"))+theme_classic(base_size=14)+labs(title = "Comparsion of different Model accuracy with original data",
+         x = "# of reduced features",
+         y = "KNN Classification Accuracy",color = "Legend")+geom_point(aes(x=`# of PC's`, y=value, colour=variable))
+
+```
+
+
+
+
